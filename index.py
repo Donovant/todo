@@ -279,9 +279,9 @@ def add_task(version, **kwargs):
         output_file.close()
     except Exception as e:
         index_log.error(e)
-        return 'Fail'
+        return {'status': 'fail'}
 
-    return 'Success'
+    return {'status': 'success'}
 
 
 @app.route('/user/<username>')
