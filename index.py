@@ -19,6 +19,7 @@ from flask import Flask, abort, jsonify, Response
 from webargs.flaskparser import parser, use_kwargs
 from webargs import *
 
+# user-defined imports
 from common import logger
 from common import validators
 
@@ -57,17 +58,14 @@ def custom_handler(error):
 
     content_type = 'application/json; charset=utf8'
     index_log.info(error)
-    errors = []
+    custom_errors = {}
 
-    for arg in error.data['messages']['query']:
-        if isinstance(error.data['messages']['query'][arg], list):
-            for item in error.data['messages']['query'][arg]:
-                return Response(str(item), 400, mimetype=content_type)
-        elif isinstance(error.data['messages']['query'][arg], dict):
-            for item in error.data['messages']['query'][arg]:
-                return Response(str(error.data['messages']['query'][arg][item]), 400, mimetype=content_type)
+    for arg in error.data['messages']:
+        if isinstance(error.data['messages'][arg], list):
+            for item in error.data['messages'][arg]:
+                custom_errors[arg] = item
 
-    return str(errors), 400
+    return json.dumps(custom_errors), 400
 
 
 get_chores_args = {
