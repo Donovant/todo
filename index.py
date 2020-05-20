@@ -10,16 +10,17 @@
 # built-in imports
 import json
 import sys
+from time import time
 
 # external imports
+import arrow
 from flask import Flask, abort, jsonify
 from flask_cors import CORS, cross_origin
 from webargs.flaskparser import FlaskParser, use_kwargs
 from webargs import *
 
 # user defined modules
-sys.path.insert(0, '/home/dusr/common')
-import logger
+import common.logger as logger
 
 
 app = Flask(__name__)
@@ -43,12 +44,14 @@ error = {
     8: 'Invalid task id. Task_ids must contain valid integer values.'
 }
 
-# Hardcoded account_id's
+# Hardcode account_id's
 # TODO: Implement database to store this information
 users = None
-with open('users.json', 'r') as f:
-    users = json.loads(f) 
+f = open('users.json', 'r')
+users = json.loads(f.read())
 
+curr_date = arrow.now('US/Mountain').floor('day').timestamp
+max_date = arrow.now('US/Mountain').floor('day').shift(days=30).timestamp
 
 @app.errorhandler(422)
 def custom_handler(error):
@@ -62,8 +65,11 @@ def custom_handler(error):
             # return 'Invalid Request: user_id is required.', 400
             errors.append('Invalid Request: user_id is required.')
     if 'task_ids' in error.data['messages']:
-        print(error)
         errors.append('Invalid Request: task_ids required.')
+    if 'task' in error.data['messages']:
+        errors.append('Invalid Request: task is required.')
+    if 'task_date' in error.data['messages']:
+        errors.append('Invalid Request: task_date must be within the next 30 days (Including today).')
     return str(errors), 400
 
 
@@ -114,7 +120,7 @@ ack_chores_args = {
 @app.route('/<version>/tsk/ack/', methods=['GET'], strict_slashes=False)
 @cross_origin(origins='*')
 @use_kwargs(ack_chores_args)
-def ack_chores(version, **kwargs):
+def ack_tasks(version, **kwargs):
 
     if version != 'v1.0':
         abort(400, error[1])
@@ -129,10 +135,9 @@ def ack_chores(version, **kwargs):
         abort(400, error[3])
 
     try:
-        tasks = kwargs['task_ids']
-        # tasks = kwargs['task_ids'].split(',')
-        for item in tasks:
-            print(item)
+        task_ids = kwargs['task_ids']
+        ack_task_count = len(task_ids)
+        for item in task_ids:
             assert int(item), error[8]
     except AssertionError as e:
         index_log.error(e)
@@ -141,46 +146,114 @@ def ack_chores(version, **kwargs):
         index_log.error(e)
         abort(400, error[7])
 
+    existing_tasks = {}
     try:
-        input_file = open('to_do_list.json', 'r')
+        with open('to_do_list.json', 'r') as f:
+            existing_tasks = f.read()
+        existing_tasks = json.loads(existing_tasks)
+        assert existing_tasks != '', 'No tasks found.'
+    except AssertionError as e:
+        index_log.error(e)
+        abort(400, e)
     except Exception as e:
         index_log.error(e)
-        print(e)
-    existing_to_do_list = input_file.read()
-    input_file.close()
-    if existing_to_do_list == '':
-        existing_to_do_list = {}
+        abort(400, error[6])
+
+    tasks_removed = 0
+    for item in task_ids:
+        if item in existing_tasks:
+            # Remove it
+            existing_tasks.pop(item, None)
+            tasks_removed += 1
+
+    with open('to_do_list.json', 'w') as f:
+        tasks = f.write(json.dumps(existing_tasks))
+
+    if ack_task_count == tasks_removed:
+        return "Success"
+    elif tasks_removed > 0:
+        return "Partial"
+    else:
+        return "Fail"
+
+
+add_task_args = {
+    "pp": fields.String(allow_missing=True, location="query"),
+    "user_id": fields.UUID(required=True, location="query"),
+    "task": fields.String(required=True, location="query"),
+    "assigned_to_id": fields.UUID(allow_missing=True, location="query"),
+    "task_date": fields.Int(allow_missing=True, location="query",
+        validate=lambda td: curr_date <= td <= max_date),
+    "private": fields.Bool(allow_missing=True, Default=False)
+}
+
+
+@app.route('/<version>/tsk/add/', methods=['GET'], strict_slashes=False)
+@cross_origin(origins='*')
+@use_kwargs(add_task_args)
+def add_task(version, **kwargs):
+
+    if version != 'v1.0':
+        abort(400, error[1])
+
     try:
-        existing_to_do_list = json.loads(existing_to_do_list)
-    except:
-        existing_to_do_list = {}
+        assert str(kwargs['user_id']) in users, error[2]
+    except AssertionError as e:
+        index_log.error(e)
+        abort(400, e)
+    except Exception as e:
+        index_log.error(e)
+        abort(400, error[3])
 
-    for item in existing_to_do_list:
-        if item not in tasks:
-            print("BP1", item)
-            print("BP2", existing_to_do_list[item])
+    assigned_to = kwargs.get('assigned_to_id', kwargs['user_id'])
+    task_date = kwargs.get('task_date', curr_date)
 
-            new_task = {
-                item: existing_to_do_list[item]
-            }
-            try:
-                output_file = open('to_do_list.json', 'w')
-            except Exception as e:
-                to_do_log.error(e)
-                print(e)
-            existing_to_do_list.update(new_task)
-            output_file.write(json.dumps(existing_to_do_list))
-            output_file.close()
+    formatted_task_date = arrow.get(task_date).format('MM-DD-YYYY')
 
-
-        else:
-            print("COMPLETING {}".format(item))
-
-    if 'pp' in kwargs:
+    tasks = {}
+    try:
+        with open('to_do_list.json', 'r') as f:
+            tasks = f.read()
         tasks = json.loads(tasks)
-        return jsonify(tasks)
+    except Exception as e:
+        index_log.error(e)
+        abort(400, error[6])
 
-    return tasks
+    custom_task_enum = 1000
+    if tasks:
+        while str(custom_task_enum) in tasks:
+            custom_task_enum += 1
+
+    curr_time = arrow.now('US/Mountain')
+    current_time = curr_time.format('YYYY MM DD HH:mm')
+    year = curr_time.format('YYYY')
+    month = curr_time.format('MM')
+    month_str = curr_time.format('MMMM')  # January, February, March ...
+    day_of_month = curr_time.format('DD')
+
+    date_str = "{} {}, {} ".format(month_str, day_of_month, year)
+    new_task = {
+        custom_task_enum:
+        {
+            "date": date_str,
+            "task": kwargs['task']
+        }
+    }
+
+    try:
+        output_file = open('to_do_list.json', 'w')
+    except Exception as e:
+        index_log.error(e)
+
+    try:
+        tasks.update(new_task)
+        output_file.write(json.dumps(tasks))
+        output_file.close()
+    except Exception as e:
+        index_log.error(e)
+        return 'Fail'
+
+    return 'Success'
 
 
 @app.route('/user/<username>')
