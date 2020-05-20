@@ -3,10 +3,11 @@
     The purpose of this script is to pull data (tasks) from a file.
     If a task has is to be performed on the current date, it is added
     to an active tasks list.  This script will also have the ability to
-    accept requests/POST to acknowledge that a task has been completed.
+    accept requests to acknowledge that a task has been completed.
     Author: Donovan Torgerson
     Email: Donovan@Torgersonlabs.com
 '''
+
 # built-in imports
 import json
 import sys
@@ -14,34 +15,31 @@ from time import time
 
 # external imports
 import arrow
-from flask import Flask, abort, jsonify
-from flask_cors import CORS, cross_origin
-from webargs.flaskparser import FlaskParser, use_kwargs
+from flask import Flask, abort, jsonify, Response
+from webargs.flaskparser import parser, use_kwargs
 from webargs import *
 
-# user defined modules
-import common.logger as logger
-
+from common import logger
+from common import validators
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
-CORS(app)
-# parser = webargs.flaskparser.parser()
-parser = FlaskParser()
+app.url_map.converters['version'] = validators.VersionConverter
 
 # Setup logging
 index_log = logger.get_logger('logger', 'to_do_index.log')
 
+# TODO: Make this its own file
 # Dictionary of all errors for easier reuse.
 error = {
-    1: 'Invalid version.',
-    2: 'User not found.',
-    3: 'Error validating user_id.',
-    4: 'Invalid Request: user_id must be a valid UUID.',
-    5: 'Invalid Request: user_id is required.',
-    6: 'Error retrieving task list.',
-    7: 'Error validating task_ids.',
-    8: 'Invalid task id. Task_ids must contain valid integer values.'
+    '01x001': 'Invalid version.',
+    '01x002': 'User not found.',
+    '01x003': 'Error validating user_id.',
+    '01x004': 'Invalid Request: user_id must be a valid UUID.',
+    '01x005': 'Invalid Request: user_id is required.',
+    '01x006': 'Error retrieving task list.',
+    '01x007': 'Error validating task_ids.',
+    '01x008': 'Invalid task id. Task_ids must contain valid integer values.'
 }
 
 # Hardcode account_id's
@@ -53,55 +51,65 @@ users = json.loads(f.read())
 curr_date = arrow.now('US/Mountain').floor('day').timestamp
 max_date = arrow.now('US/Mountain').floor('day').shift(days=30).timestamp
 
+
 @app.errorhandler(422)
 def custom_handler(error):
+
+    content_type = 'application/json; charset=utf8'
     index_log.info(error)
     errors = []
-    if 'user_id' in error.data['messages']:
-        if 'Not a valid UUID.' in error.data['messages']['user_id']:
-            # return 'Invalid Request: user_id must be a valid UUID.', 400
-            errors.append('Invalid Request: user_id must be a valid UUID.')
-        if 'Missing data for required field.' in error.data['messages']['user_id']:
-            # return 'Invalid Request: user_id is required.', 400
-            errors.append('Invalid Request: user_id is required.')
-    if 'task_ids' in error.data['messages']:
-        errors.append('Invalid Request: task_ids required.')
-    if 'task' in error.data['messages']:
-        errors.append('Invalid Request: task is required.')
-    if 'task_date' in error.data['messages']:
-        errors.append('Invalid Request: task_date must be within the next 30 days (Including today).')
+
+    for arg in error.data['messages']['query']:
+        if isinstance(error.data['messages']['query'][arg], list):
+            for item in error.data['messages']['query'][arg]:
+                return Response(str(item), 400, mimetype=content_type)
+        elif isinstance(error.data['messages']['query'][arg], dict):
+            for item in error.data['messages']['query'][arg]:
+                return Response(str(error.data['messages']['query'][arg][item]), 400, mimetype=content_type)
+
     return str(errors), 400
 
 
 get_chores_args = {
-    "pp": fields.String(allow_missing=True, location="query"),
-    "user_id": fields.UUID(required=True, location="query")
+    "pp": fields.String(
+        allow_missing=True,
+        location="query",
+        # error_messages={}
+    ),
+    "user_id": fields.UUID(
+        required=True,
+        location="query",
+        error_messages={
+            "null": error['01x004'],
+            "required": error['01x005'],
+            "invalid_uuid": error['01x004'],
+            "type": error['01x004']
+            # Unused error messages
+            # "validator_failed": error['01x004'],
+        }
+    )
 }
 
 
-@app.route('/<version>/tsk/get/', methods=['GET'], strict_slashes=False)
-@cross_origin(origins='*')
+@app.route('/<version("v1.0"):version>/tsk/get/', methods=['GET'], strict_slashes=False)
 @use_kwargs(get_chores_args)
 def get_chores(version, **kwargs):
 
-    if version != 'v1.0':
-        abort(400, error[1])
-
     try:
-        assert str(kwargs['user_id']) in users, error[2]
+        assert str(kwargs['user_id']) in users, error['01x002']
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[3])
+        abort(400, error['01x003'])
 
     try:
         with open('to_do_list.json', 'r') as f:
             tasks = f.read()
     except Exception as e:
         index_log.error(e)
-        abort(400, error[6])
+        abort(400, error['01x006'])
 
     if 'pp' in kwargs:
         tasks = json.loads(tasks)
@@ -111,40 +119,64 @@ def get_chores(version, **kwargs):
 
 
 ack_chores_args = {
-    "pp": fields.String(allow_missing=True, location="query"),
-    "task_ids": fields.DelimitedList(fields.Str(), delimiter=',', required=True, location="query"),
-    "user_id": fields.UUID(required=True, location="query")
+    "pp": fields.String(
+        allow_missing=True,
+        location="query",
+        # error_messages={}
+    ),
+    "task_ids": fields.DelimitedList(
+        fields.Str(),
+        delimiter=',',
+        required=True,
+        location="query",
+        error_messages={
+            "null": error['01x008'],
+            "required": error['01x008'],
+            "invalid": error['01x008'],
+            "type": error['01x008']
+            # Unused error messages
+            # "validator_failed": error['01x008'],
+        }
+    ),
+    "user_id": fields.UUID(
+        required=True,
+        location="query",
+        error_messages={
+            "null": error['01x004'],
+            "required": error['01x005'],
+            "invalid_uuid": error['01x004'],
+            "type": error['01x004']
+            # Unused error messages
+            # "validator_failed": error['01x004'],
+        }
+    )
 }
 
 
-@app.route('/<version>/tsk/ack/', methods=['GET'], strict_slashes=False)
-@cross_origin(origins='*')
+@app.route('/<version("v1.0"):version>/tsk/ack/', methods=['GET'], strict_slashes=False)
 @use_kwargs(ack_chores_args)
 def ack_tasks(version, **kwargs):
 
-    if version != 'v1.0':
-        abort(400, error[1])
-
     try:
-        assert str(kwargs['user_id']) in users, error[2]
+        assert str(kwargs['user_id']) in users, error['01x002']
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[3])
+        abort(400, error['01x003'])
 
     try:
         task_ids = kwargs['task_ids']
         ack_task_count = len(task_ids)
         for item in task_ids:
-            assert int(item), error[8]
+            assert int(item), error['01x008']
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[7])
+        abort(400, error['01x007'])
 
     existing_tasks = {}
     try:
@@ -157,7 +189,7 @@ def ack_tasks(version, **kwargs):
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[6])
+        abort(400, error['01x006'])
 
     tasks_removed = 0
     for item in task_ids:
@@ -188,13 +220,9 @@ add_task_args = {
 }
 
 
-@app.route('/<version>/tsk/add/', methods=['GET'], strict_slashes=False)
-@cross_origin(origins='*')
+@app.route('/<version("v1.0"):version>/tsk/add/', methods=['GET'], strict_slashes=False)
 @use_kwargs(add_task_args)
 def add_task(version, **kwargs):
-
-    if version != 'v1.0':
-        abort(400, error[1])
 
     try:
         assert str(kwargs['user_id']) in users, error[2]
@@ -203,7 +231,7 @@ def add_task(version, **kwargs):
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[3])
+        abort(400, error['01x003'])
 
     assigned_to = kwargs.get('assigned_to_id', kwargs['user_id'])
     task_date = kwargs.get('task_date', curr_date)
@@ -217,7 +245,7 @@ def add_task(version, **kwargs):
         tasks = json.loads(tasks)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[6])
+        abort(400, error['01x006'])
 
     custom_task_enum = 1000
     if tasks:
@@ -257,6 +285,6 @@ def add_task(version, **kwargs):
 
 
 @app.route('/user/<username>')
-# @cross_origin(origins='*')
 def show_user(username):
-    return 'user {}'.format(username)
+    return {'user': username}
+

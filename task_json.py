@@ -247,7 +247,7 @@ tasks = {
     },
     40: {
         "dom": ['18'],
-        "month": biannually,
+        "month": quarterly,
         "year": years,
         "name": "Clean Ceiling Fans"
     },
@@ -256,6 +256,18 @@ tasks = {
         "month": quarterly,
         "year": years,
         "name": "Clean Inside Of Computers"
+    },
+    42: {
+        "dom": ['02'],
+        "month": biannually,
+        "year": years,
+        "name": "Clean Behind Stove"
+    },
+    43: {
+        "dom": ['02'],
+        "month": biannually,
+        "year": years,
+        "name": "Clean Behind Refrigerator"
     },
     9999: {
         "dom": ['01'],
