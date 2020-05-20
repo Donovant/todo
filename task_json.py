@@ -4,18 +4,13 @@ spring = ['05']  # May
 winter = ['02']  # February
 biannually = ['06', '12']  # June and December
 quarterly = ['03', '06', '09', '12']  # March, June, September, December
+bimonthly = ['02', '04', '06', '08', '10', '12']
 monthly = ['01', '02', '03', '04', '05', '06',
            '07', '08', '09', '10', '11', '12']
-years = ['2019', '2020', '2021', '2022', '2023', '2024', 
+years = ['2020', '2021', '2022', '2023', '2024',
          '2025', '2026', '2027', '2028', '2029', '2030']
 
 tasks = {
-    -2: {
-        "dom": ['01'],
-        "month": monthly,
-        "year": years,
-        "name": "Test Task!!"
-    },
     1: {
         "dom": ['10'],
         "month": monthly,
@@ -30,7 +25,7 @@ tasks = {
     },
     3: {
         "dom": ['12'],
-        "month": monthly,
+        "month": bimonthly,
         "year": years,
         "name": "Clean Hood Filters"
     },
