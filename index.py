@@ -7,40 +7,35 @@
     Author: Donovan Torgerson
     Email: Donovan@Torgersonlabs.com
 '''
+
 # built-in imports
 import json
 import sys
 
 # external imports
-from flask import Flask, abort, jsonify
-from flask_cors import CORS, cross_origin
-from webargs.flaskparser import FlaskParser, use_kwargs
+from flask import Flask, abort, jsonify, Response
+from webargs.flaskparser import parser, use_kwargs
 from webargs import *
-
-# user defined modules
-sys.path.insert(0, '/home/dusr/common')
-import logger
 
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
-CORS(app)
-# parser = webargs.flaskparser.parser()
-parser = FlaskParser()
+app.url_map.converters['version'] = dt_common.validators.VersionConverter
 
 # Setup logging
-index_log = logger.get_logger('logger', 'to_do_index.log')
+index_log = dt_common.logger.get_logger('logger', 'to_do_index.log')
 
+# TODO: Make this its own file
 # Dictionary of all errors for easier reuse.
 error = {
-    1: 'Invalid version.',
-    2: 'User not found.',
-    3: 'Error validating user_id.',
-    4: 'Invalid Request: user_id must be a valid UUID.',
-    5: 'Invalid Request: user_id is required.',
-    6: 'Error retrieving task list.',
-    7: 'Error validating task_ids.',
-    8: 'Invalid task id. Task_ids must contain valid integer values.'
+    '01x001': 'Invalid version.',
+    '01x002': 'User not found.',
+    '01x003': 'Error validating user_id.',
+    '01x004': 'Invalid Request: user_id must be a valid UUID.',
+    '01x005': 'Invalid Request: user_id is required.',
+    '01x006': 'Error retrieving task list.',
+    '01x007': 'Error validating task_ids.',
+    '01x008': 'Invalid task id. Task_ids must contain valid integer values.'
 }
 
 # Hardcoded account_id's
@@ -52,34 +47,46 @@ with open('users.json', 'r') as f:
 
 @app.errorhandler(422)
 def custom_handler(error):
+
+    content_type = 'application/json; charset=utf8'
     index_log.info(error)
     errors = []
-    if 'user_id' in error.data['messages']:
-        if 'Not a valid UUID.' in error.data['messages']['user_id']:
-            # return 'Invalid Request: user_id must be a valid UUID.', 400
-            errors.append('Invalid Request: user_id must be a valid UUID.')
-        if 'Missing data for required field.' in error.data['messages']['user_id']:
-            # return 'Invalid Request: user_id is required.', 400
-            errors.append('Invalid Request: user_id is required.')
-    if 'task_ids' in error.data['messages']:
-        print(error)
-        errors.append('Invalid Request: task_ids required.')
+
+    for arg in error.data['messages']['query']:
+        if isinstance(error.data['messages']['query'][arg], list):
+            for item in error.data['messages']['query'][arg]:
+                return Response(str(item), 400, mimetype=content_type)
+        elif isinstance(error.data['messages']['query'][arg], dict):
+            for item in error.data['messages']['query'][arg]:
+                return Response(str(error.data['messages']['query'][arg][item]), 400, mimetype=content_type)
+
     return str(errors), 400
 
 
 get_chores_args = {
-    "pp": fields.String(allow_missing=True, location="query"),
-    "user_id": fields.UUID(required=True, location="query")
+    "pp": fields.String(
+        allow_missing=True,
+        location="query",
+        # error_messages={}
+    ),
+    "user_id": fields.UUID(
+        required=True,
+        location="query",
+        error_messages={
+            "null": error['01x004'],
+            "required": error['01x005'],
+            "invalid_uuid": error['01x004'],
+            "type": error['01x004']
+            # Unused error messages
+            # "validator_failed": error['01x004'],
+        }
+    )
 }
 
 
-@app.route('/<version>/tsk/get/', methods=['GET'], strict_slashes=False)
-@cross_origin(origins='*')
+@app.route('/<version("v1.0"):version>/tsk/get/', methods=['GET'], strict_slashes=False)
 @use_kwargs(get_chores_args)
 def get_chores(version, **kwargs):
-
-    if version != 'v1.0':
-        abort(400, error[1])
 
     try:
         assert str(kwargs['user_id']) in users, error[2]
@@ -88,14 +95,14 @@ def get_chores(version, **kwargs):
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[3])
+        abort(400, error['01x003'])
 
     try:
         with open('to_do_list.json', 'r') as f:
             tasks = f.read()
     except Exception as e:
         index_log.error(e)
-        abort(400, error[6])
+        abort(400, error['01x006'])
 
     if 'pp' in kwargs:
         tasks = json.loads(tasks)
@@ -105,19 +112,43 @@ def get_chores(version, **kwargs):
 
 
 ack_chores_args = {
-    "pp": fields.String(allow_missing=True, location="query"),
-    "task_ids": fields.DelimitedList(fields.Str(), delimiter=',', required=True, location="query"),
-    "user_id": fields.UUID(required=True, location="query")
+    "pp": fields.String(
+        allow_missing=True,
+        location="query",
+        # error_messages={}
+    ),
+    "task_ids": fields.DelimitedList(
+        fields.Str(),
+        delimiter=',',
+        required=True,
+        location="query",
+        error_messages={
+            "null": error['01x008'],
+            "required": error['01x008'],
+            "invalid": error['01x008'],
+            "type": error['01x008']
+            # Unused error messages
+            # "validator_failed": error['01x008'],
+        }
+    ),
+    "user_id": fields.UUID(
+        required=True,
+        location="query",
+        error_messages={
+            "null": error['01x004'],
+            "required": error['01x005'],
+            "invalid_uuid": error['01x004'],
+            "type": error['01x004']
+            # Unused error messages
+            # "validator_failed": error['01x004'],
+        }
+    )
 }
 
 
-@app.route('/<version>/tsk/ack/', methods=['GET'], strict_slashes=False)
-@cross_origin(origins='*')
+@app.route('/<version("v1.0"):version>/tsk/ack/', methods=['GET'], strict_slashes=False)
 @use_kwargs(ack_chores_args)
 def ack_chores(version, **kwargs):
-
-    if version != 'v1.0':
-        abort(400, error[1])
 
     try:
         assert str(kwargs['user_id']) in users, error[2]
@@ -126,30 +157,30 @@ def ack_chores(version, **kwargs):
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[3])
+        abort(400, error['01x003'])
 
     try:
         tasks = kwargs['task_ids']
-        # tasks = kwargs['task_ids'].split(',')
         for item in tasks:
-            print(item)
-            assert int(item), error[8]
+            assert int(item), error['01x008']
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error[7])
+        abort(400, error['01x007'])
 
     try:
         input_file = open('to_do_list.json', 'r')
     except Exception as e:
         index_log.error(e)
-        print(e)
+
     existing_to_do_list = input_file.read()
     input_file.close()
+
     if existing_to_do_list == '':
         existing_to_do_list = {}
+
     try:
         existing_to_do_list = json.loads(existing_to_do_list)
     except:
@@ -157,24 +188,17 @@ def ack_chores(version, **kwargs):
 
     for item in existing_to_do_list:
         if item not in tasks:
-            print("BP1", item)
-            print("BP2", existing_to_do_list[item])
-
             new_task = {
                 item: existing_to_do_list[item]
             }
+
             try:
                 output_file = open('to_do_list.json', 'w')
             except Exception as e:
-                to_do_log.error(e)
-                print(e)
+                index_log.error(e)
             existing_to_do_list.update(new_task)
             output_file.write(json.dumps(existing_to_do_list))
             output_file.close()
-
-
-        else:
-            print("COMPLETING {}".format(item))
 
     if 'pp' in kwargs:
         tasks = json.loads(tasks)
@@ -184,6 +208,5 @@ def ack_chores(version, **kwargs):
 
 
 @app.route('/user/<username>')
-# @cross_origin(origins='*')
 def show_user(username):
-    return 'user {}'.format(username)
+    return {'user': username}
