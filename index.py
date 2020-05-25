@@ -22,6 +22,7 @@ from webargs import *
 # user-defined imports
 from common import logger
 from common import validators
+from common.error_handling import get_error
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
@@ -30,18 +31,6 @@ app.url_map.converters['version'] = validators.VersionConverter
 # Setup logging
 index_log = logger.get_logger('logger', 'to_do_index.log')
 
-# TODO: Make this its own file
-# Dictionary of all errors for easier reuse.
-error = {
-    '01x001': 'Invalid version.',
-    '01x002': 'User not found.',
-    '01x003': 'Error validating user_id.',
-    '01x004': 'Invalid Request: user_id must be a valid UUID.',
-    '01x005': 'Invalid Request: user_id is required.',
-    '01x006': 'Error retrieving task list.',
-    '01x007': 'Error validating task_ids.',
-    '01x008': 'Invalid task id. Task_ids must contain valid integer values.'
-}
 
 # Hardcode account_id's
 # TODO: Implement database to store this information
@@ -55,7 +44,6 @@ max_date = arrow.now('US/Mountain').floor('day').shift(days=30).timestamp
 
 @app.errorhandler(422)
 def custom_handler(error):
-
     content_type = 'application/json; charset=utf8'
     index_log.info(error)
     custom_errors = {}
@@ -64,6 +52,8 @@ def custom_handler(error):
         if isinstance(error.data['messages'][arg], list):
             for item in error.data['messages'][arg]:
                 custom_errors[arg] = item
+        if isinstance(error.data['messages'][arg], dict):
+            custom_errors.update(error.data['messages'][arg])
 
     return json.dumps(custom_errors), 400
 
@@ -78,12 +68,12 @@ get_chores_args = {
         required=True,
         location="query",
         error_messages={
-            "null": error['01x004'],
-            "required": error['01x005'],
-            "invalid_uuid": error['01x004'],
-            "type": error['01x004']
+            "null": get_error('01x004'),
+            "required": get_error('01x005'),
+            "invalid_uuid": get_error('01x004'),
+            "type": get_error('01x004')
             # Unused error messages
-            # "validator_failed": error['01x004'],
+            # "validator_failed": get_error('01x004'),
         }
     )
 }
@@ -94,13 +84,13 @@ get_chores_args = {
 def get_chores(version, **kwargs):
 
     try:
-        assert str(kwargs['user_id']) in users, error['01x002']
+        assert str(kwargs['user_id']) in users, get_error('01x002')
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error['01x003'])
+        abort(400, get_error('01x003'))
 
     try:
         with open('to_do_list.json', 'r') as f:
@@ -128,24 +118,24 @@ ack_chores_args = {
         required=True,
         location="query",
         error_messages={
-            "null": error['01x008'],
-            "required": error['01x008'],
-            "invalid": error['01x008'],
-            "type": error['01x008']
+            "null": get_error('01x008'),
+            "required": get_error('01x008'),
+            "invalid": get_error('01x008'),
+            "type": get_error('01x008')
             # Unused error messages
-            # "validator_failed": error['01x008'],
+            # "validator_failed": get_error('01x008'),
         }
     ),
     "user_id": fields.UUID(
         required=True,
         location="query",
         error_messages={
-            "null": error['01x004'],
-            "required": error['01x005'],
-            "invalid_uuid": error['01x004'],
-            "type": error['01x004']
+            "null": get_error('01x004'),
+            "required": get_error('01x005'),
+            "invalid_uuid": get_error('01x004'),
+            "type": get_error('01x004')
             # Unused error messages
-            # "validator_failed": error['01x004'],
+            # "validator_failed": get_error('01x004'),
         }
     )
 }
@@ -156,19 +146,19 @@ ack_chores_args = {
 def ack_tasks(version, **kwargs):
 
     try:
-        assert str(kwargs['user_id']) in users, error['01x002']
+        assert str(kwargs['user_id']) in users, get_error('01x002')
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error['01x003'])
+        abort(400, get_error('01x003'))
 
     try:
         task_ids = kwargs['task_ids']
         ack_task_count = len(task_ids)
         for item in task_ids:
-            assert int(item), error['01x008']
+            assert int(item), get_error('01x008')
     except AssertionError as e:
         index_log.error(e)
         abort(400, e)
@@ -200,11 +190,11 @@ def ack_tasks(version, **kwargs):
         tasks = f.write(json.dumps(existing_tasks))
 
     if ack_task_count == tasks_removed:
-        return "Success"
+        return json.dumps({"status": "success"})
     elif tasks_removed > 0:
-        return "Partial"
+        return json.dumps({"status": "partial"})
     else:
-        return "Fail"
+        return json.dumps({"status": "fail"})
 
 
 add_task_args = {
@@ -229,7 +219,7 @@ def add_task(version, **kwargs):
         abort(400, e)
     except Exception as e:
         index_log.error(e)
-        abort(400, error['01x003'])
+        abort(400, get_error('01x003'))
 
     assigned_to = kwargs.get('assigned_to_id', kwargs['user_id'])
     task_date = kwargs.get('task_date', curr_date)
@@ -280,9 +270,3 @@ def add_task(version, **kwargs):
         return {'status': 'fail'}
 
     return {'status': 'success'}
-
-
-@app.route('/user/<username>')
-def show_user(username):
-    return {'user': username}
-
